@@ -1,0 +1,119 @@
+.unlock-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: var(--bg, #f5f5f5);
+  padding: 24px;
+}
+
+.unlock-card {
+  width: min(360px, 100%);
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border, #e8e8e8);
+  border-radius: 12px;
+  padding: 28px 24px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.unlock-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+
+.unlock-desc {
+  font-size: 13px;
+  color: var(--text-secondary, #888);
+  line-height: 1.45;
+}
+
+.unlock-input,
+.enc-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e8e8e8);
+  border-radius: 6px;
+  background: var(--bg, #f5f5f5);
+  color: var(--text, #1a1a1a);
+  outline: none;
+}
+
+.unlock-input:focus,
+.enc-input:focus {
+  border-color: var(--accent, #4a90d9);
+}
+
+.unlock-btn {
+  margin-top: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--accent, #4a90d9);
+  color: #fff;
+  font-weight: 600;
+}
+
+.unlock-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.unlock-btn:hover:not(:disabled) {
+  background: var(--accent-hover, #357abd);
+}
+
+.unlock-error {
+  font-size: 12px;
+  color: var(--danger, #e74c3c);
+  line-height: 1.4;
+}
+
+.unlock-hint {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  line-height: 1.4;
+}
+
+.enc-settings {
+  padding-bottom: 4px;
+}
+
+.enc-badge {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.enc-badge.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.enc-actions,
+.enc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 4px 4px;
+}
+
+.enc-form-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.enc-submit {
+  color: var(--accent) !important;
+}
+
+.enc-warn {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  padding: 0 8px;
+}

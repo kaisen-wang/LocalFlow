@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LocalFlow",
+  "version": "1.0.0",
+  "identifier": "wang.kaisen.localflow",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "LocalFlow",
+        "width": 1080,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 560
+      },
+      {
+        "label": "quick-capture",
+        "title": "快速收集",
+        "url": "index.html",
+        "width": 560,
+        "height": 108,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "transparent": true,
+        "visible": false,
+        "center": true,
+        "focus": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "纯本地、键盘优先的工作待办",
+    "longDescription": "LocalFlow（本地流）是一款不联网、不注册的 PC 端待办工具。数据 100% 留在本机，支持快速收集、项目标签、番茄钟、看板、备份导出与可选 AES-256 加密。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  }
+}

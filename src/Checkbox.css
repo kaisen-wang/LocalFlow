@@ -1,0 +1,64 @@
+.lf-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: 2px solid var(--border);
+  background: var(--card-bg);
+  color: #fff;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    transform 0.12s,
+    box-shadow 0.15s;
+}
+
+.lf-check:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.lf-check:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--shadow);
+  border-color: var(--accent);
+}
+
+.lf-check:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lf-check.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.lf-check-round {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+
+.lf-check-square {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+}
+
+.lf-check-mark {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.lf-check-round .lf-check-mark {
+  width: 11px;
+  height: 11px;
+}
+
+/* 完成动画时沿用原来的弹跳 */
+.task-item.completing .lf-check {
+  animation: check-pop 0.4s ease;
+}

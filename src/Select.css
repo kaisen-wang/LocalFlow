@@ -1,0 +1,98 @@
+.lf-select {
+  position: relative;
+  width: 100%;
+}
+
+.lf-select-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  text-align: left;
+}
+
+.lf-select-trigger:hover {
+  border-color: var(--accent);
+}
+
+.lf-select.open .lf-select-trigger {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--shadow);
+}
+
+.lf-select-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lf-select-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.lf-select-caret {
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.lf-select-menu {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.lf-select-menu-fixed {
+  /* position/size 由 JS 计算，避免被详情面板 overflow 裁切 */
+}
+
+.lf-select-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--text);
+  text-align: left;
+}
+
+.lf-select-option:hover {
+  background: var(--hover);
+}
+
+.lf-select-option.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.lf-select.compact {
+  width: auto;
+  min-width: 110px;
+}
+
+.lf-select.compact .lf-select-trigger {
+  padding: 3px 8px;
+  font-size: 12px;
+}

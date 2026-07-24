@@ -1,0 +1,32 @@
+.lf-icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.nav-icon {
+  width: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.nav-item.active .nav-icon {
+  color: var(--accent);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.icon-btn:hover {
+  color: var(--accent);
+}
+
+.icon-btn.danger:hover {
+  color: var(--danger);
+}
