@@ -56,7 +56,7 @@
 1. 打开仓库 **Releases**，下载对应系统文件（Windows `.msi` / macOS `.dmg` / Linux `.AppImage` 或 `.deb`）
 2. 安装后打开即可；说明见 [`用户手册.md`](./用户手册.md)
 
-发版由 GitHub Actions 自动打包：推送 `v*` 标签（如 `v1.0.0`）会生成草稿 Release。
+发版由 GitHub Actions 自动打包：推送 `v*` 标签（如 `v1.1.0`）会生成草稿 Release。
 
 ### 开发者：从源码运行
 
@@ -224,4 +224,4 @@ Rust 库 crate 名为 **`localflow_lib`**（避免 Windows 下与可执行文件
 - [`跨平台测试清单.md`](./跨平台测试清单.md) — 发版前验收  
 - [`产品文档.md`](./产品文档.md) — 为什么做、做成什么样  
 - [`开发进度.md`](./开发进度.md) — 做到哪一步了  
-- [`AGENTS.md`](./AGENTS.md) — 给 AI / 开发者的架构速查  
+- [`AGENTS.md`](./AGENTS.md) — 给 AI / 开发者的架构速查

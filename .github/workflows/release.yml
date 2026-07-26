@@ -52,8 +52,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v1.0.0' }}
-          releaseName: LocalFlow ${{ github.ref_type == 'tag' && github.ref_name || 'v1.0.0' }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v1.1.0' }}
+          releaseName: LocalFlow ${{ github.ref_type == 'tag' && github.ref_name || 'v1.1.0' }}
           releaseBody: |
             ## LocalFlow 安装包
 
