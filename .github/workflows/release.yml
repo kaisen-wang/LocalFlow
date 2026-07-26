@@ -59,7 +59,7 @@ jobs:
 
             按系统下载对应文件安装即可。数据保存在本机，无需账号。
 
-            使用说明见仓库 [`用户手册.md`](https://github.com/${{ github.repository }}/blob/main/用户手册.md)。
+            使用说明见仓库 [`用户手册.md`](https://github.com/kaisen-wang/LocalFlow/blob/main/%E7%94%A8%E6%88%B7%E6%89%8B%E5%86%8C.md)。
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
