@@ -18,7 +18,10 @@
         "width": 1080,
         "height": 720,
         "minWidth": 800,
-        "minHeight": 560
+        "minHeight": 560,
+        "decorations": false,
+        "transparent": true,
+        "center": true
       },
       {
         "label": "quick-capture",

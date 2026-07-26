@@ -5,6 +5,7 @@ body,
   padding: 0;
   background: transparent;
   overflow: hidden;
+  background-color: transparent;
 }
 
 .qc-root {

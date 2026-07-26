@@ -91,6 +91,20 @@ const PATHS = {
   check: (
     <path d="M3.5 8.2 6.6 11.2 12.5 4.8" />
   ),
+  minimize: (
+    <path d="M3.5 8h9" />
+  ),
+  maximize: (
+    <>
+      <rect x="3.2" y="3.2" width="9.6" height="9.6" rx="1" />
+    </>
+  ),
+  restore: (
+    <>
+      <rect x="5" y="3.5" width="8" height="8" rx="1" />
+      <path d="M5 6.5h-1.8a.7.7 0 0 0-.7.7v5.6a.7.7 0 0 0 .7.7h5.6a.7.7 0 0 0 .7-.7v-1.8" />
+    </>
+  ),
 };
 
 /**

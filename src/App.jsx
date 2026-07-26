@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, startTransition } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { parseTaskInput, formatParsePreview } from "./parseTaskInput";
@@ -152,6 +153,7 @@ function App() {
   const [backupBusy, setBackupBusy] = useState(false);
   const [encStatus, setEncStatus] = useState(null); // null = 检查中
   const [bootReady, setBootReady] = useState(false);
+  const [maximized, setMaximized] = useState(false);
   const taskInputRef = useRef(null);
 
   const selectedTask = tasks.find((t) => t.id === selectedId) || null;
@@ -248,6 +250,11 @@ function App() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    const win = getCurrentWindow();
+    win.isMaximized().then(setMaximized);
   }, []);
 
   useEffect(() => {
@@ -792,19 +799,54 @@ function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <h1 className="logo">LocalFlow</h1>
+      <div
+        className="titlebar"
+        data-tauri-drag-region
+        onDoubleClick={async () => {
+          await getCurrentWindow().toggleMaximize();
+          setMaximized(await getCurrentWindow().isMaximized());
+        }}
+      >
+        <div className="titlebar-title">
+          <span className="titlebar-logo">LocalFlow</span>
           <button
-            className="theme-toggle icon-btn"
+            className="titlebar-btn"
             onClick={() => setShowShortcuts(true)}
             title="快捷键 (?)"
             aria-label="快捷键帮助"
           >
-            <Icon name="help" size={15} />
+            <Icon name="help" size={13} />
           </button>
         </div>
-        <p className="shortcut-hint">Ctrl+Shift+Space 快速收集 <br/> ? 快捷键</p>
+        <div className="titlebar-controls">
+          <button
+            className="titlebar-btn"
+            onClick={() => getCurrentWindow().minimize()}
+            aria-label="最小化"
+          >
+            <Icon name="minimize" size={12} />
+          </button>
+          <button
+            className="titlebar-btn"
+            onClick={async () => {
+              await getCurrentWindow().toggleMaximize();
+              setMaximized(!maximized);
+            }}
+            aria-label={maximized ? "最大化" : "还原"}
+          >
+            <Icon name={maximized ? "restore" : "maximize"} size={12} />
+          </button>
+          <button
+            className="titlebar-btn titlebar-close"
+            onClick={() => getCurrentWindow().hide()}
+            aria-label="关闭"
+          >
+            <Icon name="close" size={12} />
+          </button>
+        </div>
+      </div>
+      <div className="app-body">
+      <aside className="sidebar">
         <nav className="nav">
           {VIEWS.map((v) => (
             <button
@@ -1301,6 +1343,7 @@ function App() {
           </div>
         </aside>
       )}
+      </div>
 
       {pomo?.focus && (
         <PomodoroFocus

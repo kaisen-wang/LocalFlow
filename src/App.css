@@ -98,10 +98,79 @@ select {
   color: var(--text);
 }
 
+html, body, #root {
+    border-radius: 10px;
+}
+
 .app {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  border-radius: 10px;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 8px 0 16px;
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.titlebar-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.titlebar-logo {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-secondary);
+  letter-spacing: -0.2px;
+}
+
+.titlebar .titlebar-btn {
+  margin-left: 2px;
+}
+
+.titlebar-controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.titlebar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 28px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  transition: background 0.12s, color 0.12s;
+}
+
+.titlebar-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.titlebar-close:hover {
+  background: var(--danger);
+  color: #fff;
 }
 
 .sidebar {
@@ -113,22 +182,6 @@ select {
   padding: 16px 8px;
   flex-shrink: 0;
   overflow-y: auto;
-}
-
-.sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 12px 16px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 8px;
-}
-
-.logo {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
 }
 
 .theme-toggle {
@@ -147,13 +200,6 @@ select {
 .theme-toggle:hover {
   color: var(--accent);
   border-color: var(--accent);
-}
-
-.shortcut-hint {
-  font-size: 11px;
-  color: var(--text-secondary);
-  padding: 0 12px 10px;
-  line-height: 1.4;
 }
 
 .nav {

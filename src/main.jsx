@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import QuickCapture from "./QuickCapture";
 
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+
 async function boot() {
   let Root = App;
   try {
