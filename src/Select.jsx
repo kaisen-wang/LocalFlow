@@ -46,7 +46,8 @@ export default function Select({
     function onKey(e) {
       if (e.key === "Escape") setOpen(false);
     }
-    function onScroll() {
+    function onScroll(e) {
+      if (rootRef.current?.contains(e.target)) return;
       setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
