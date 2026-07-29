@@ -56,6 +56,16 @@ pub struct Subtask {
     pub created_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TaskAttachment {
+    pub id: String,
+    pub task_id: String,
+    pub file_name: String,
+    pub stored_path: String,
+    pub file_size: i64,
+    pub created_at: String,
+}
+
 fn init_schema_and_conn(app_data_dir: &std::path::Path) -> Connection {
     open_plain_db(app_data_dir).expect("failed to open database")
 }
@@ -1066,6 +1076,132 @@ fn delete_subtask(id: String, state: tauri::State<DbState>) -> Result<(), String
     Ok(())
 }
 
+// ── Attachments ──
+
+fn attachments_dir(data_dir: &Path, task_id: &str) -> PathBuf {
+    data_dir.join("attachments").join(task_id)
+}
+
+fn map_attachment_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskAttachment> {
+    Ok(TaskAttachment {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        file_name: row.get(2)?,
+        stored_path: row.get(3)?,
+        file_size: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+#[tauri::command]
+fn add_attachment(
+    task_id: String,
+    file_path: String,
+    state: tauri::State<DbState>,
+) -> Result<TaskAttachment, String> {
+    let db = state.lock_conn()?;
+    let src = Path::new(&file_path);
+    let file_name = src
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unnamed")
+        .to_string();
+    let file_size = std::fs::metadata(src)
+        .map_err(|e| e.to_string())?
+        .len() as i64;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+
+    let dest_dir = attachments_dir(&state.data_dir, &task_id);
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let stored_name = format!("{}_{}", &id[..8], file_name);
+    let dest_path = dest_dir.join(&stored_name);
+    std::fs::copy(src, &dest_path).map_err(|e| e.to_string())?;
+
+    let stored_path = dest_path.to_string_lossy().to_string();
+    db.execute(
+        "INSERT INTO task_attachments (id, task_id, file_name, stored_path, file_size, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![id, task_id, file_name, stored_path, file_size, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(TaskAttachment {
+        id,
+        task_id,
+        file_name,
+        stored_path,
+        file_size,
+        created_at: now,
+    })
+}
+
+#[tauri::command]
+fn get_attachments(
+    task_id: String,
+    state: tauri::State<DbState>,
+) -> Result<Vec<TaskAttachment>, String> {
+    let db = state.lock_conn()?;
+    let mut stmt = db
+        .prepare(
+            "SELECT * FROM task_attachments WHERE task_id = ?1 ORDER BY created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let items = stmt
+        .query_map(rusqlite::params![task_id], map_attachment_row)
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(items)
+}
+
+#[tauri::command]
+fn delete_attachment(
+    attachment_id: String,
+    state: tauri::State<DbState>,
+) -> Result<(), String> {
+    let db = state.lock_conn()?;
+
+    let (stored_path,): (String,) = db
+        .query_row(
+            "SELECT stored_path FROM task_attachments WHERE id = ?1",
+            rusqlite::params![attachment_id],
+            |row| Ok((row.get(0)?,)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    db.execute(
+        "DELETE FROM task_attachments WHERE id = ?1",
+        rusqlite::params![attachment_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let _ = std::fs::remove_file(&stored_path);
+
+    Ok(())
+}
+
+#[tauri::command]
+fn open_attachment_file(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &path])
+            .spawn()
+            .map_err(|e| format!("打开文件失败: {e}"))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        std::process::Command::new(cmd)
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开文件失败: {e}"))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn get_encryption_status(state: tauri::State<DbState>) -> EncryptionStatus {
     state.status()
@@ -1277,6 +1413,10 @@ pub fn run() {
             enable_encryption,
             disable_encryption,
             change_encryption_password,
+            add_attachment,
+            get_attachments,
+            delete_attachment,
+            open_attachment_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

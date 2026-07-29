@@ -159,6 +159,15 @@ pub fn ensure_schema(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_tasks_sort ON tasks(sort_order);
         CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag_id);
         CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
+        CREATE TABLE IF NOT EXISTS task_attachments (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            file_name TEXT NOT NULL,
+            stored_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_attachments_task ON task_attachments(task_id);
     ",
     )
     .map_err(|e| e.to_string())?;

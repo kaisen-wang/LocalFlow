@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save, open } from "@tauri-apps/plugin-dialog";
+
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { parseTaskInput, formatParsePreview } from "./parseTaskInput";
 import { renderMarkdown } from "./renderMarkdown";
@@ -147,6 +148,7 @@ function App() {
   const [subtasks, setSubtasks] = useState([]);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [descPreview, setDescPreview] = useState(false);
+  const [attachments, setAttachments] = useState([]);
   const [pomo, setPomo] = useState(null);
   const [pomoTick, setPomoTick] = useState(0);
   const [dataMessage, setDataMessage] = useState("");
@@ -197,6 +199,15 @@ function App() {
     }
     const data = await invoke("get_subtasks", { taskId });
     setSubtasks(data);
+  }, []);
+
+  const loadAttachments = useCallback(async (taskId) => {
+    if (!taskId) {
+      setAttachments([]);
+      return;
+    }
+    const data = await invoke("get_attachments", { taskId });
+    setAttachments(data);
   }, []);
 
   useEffect(() => {
@@ -274,9 +285,10 @@ function App() {
 
   useEffect(() => {
     loadSubtasks(selectedId);
+    loadAttachments(selectedId);
     setDescPreview(false);
     setNewSubtaskTitle("");
-  }, [selectedId, loadSubtasks]);
+  }, [selectedId, loadSubtasks, loadAttachments]);
 
   // 番茄钟滴答：用 endsAt 算剩余，避免后台节流导致漂移
   useEffect(() => {
@@ -575,6 +587,28 @@ function App() {
   async function handleDeleteSubtask(id) {
     await invoke("delete_subtask", { id });
     setSubtasks((prev) => prev.filter((s) => s.id !== id));
+  }
+
+  async function handleAddAttachment() {
+    if (!selectedTask) return;
+    const selected = await open({ multiple: false });
+    if (!selected) return;
+    const created = await invoke("add_attachment", {
+      taskId: selectedTask.id,
+      filePath: selected,
+    });
+    setAttachments((prev) => [...prev, created]);
+  }
+
+  async function handleDeleteAttachment(attachmentId) {
+    await invoke("delete_attachment", { attachmentId });
+    setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+  }
+
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   }
 
   async function startPomodoro(task) {
@@ -1317,6 +1351,59 @@ function App() {
                 }}
               />
             </div>
+          </div>
+
+          <div className="field">
+            <div className="field-label-row">
+              <span className="field-label">附件</span>
+              <button
+                type="button"
+                className="field-toggle"
+                onClick={handleAddAttachment}
+              >
+                + 添加
+              </button>
+            </div>
+            {attachments.length > 0 && (
+              <div className="attachment-list">
+                {attachments.map((a) => (
+                  <div
+                    key={a.id}
+                    className="attachment-item"
+                    onDoubleClick={() =>
+                      invoke("open_attachment_file", { path: a.stored_path })
+                    }
+                    title="双击打开"
+                  >
+                    <svg
+                      className="attachment-icon"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M5 14.5a4 4 0 0 1-2.8-1.2 4 4 0 0 1 0-5.6L9 0.8a3 3 0 0 1 4.2 4.2l-6 6a2 2 0 0 1-2.8-2.8l5-5" />
+                    </svg>
+                    <span className="attachment-name">{a.file_name}</span>
+                    <span className="attachment-size">
+                      {formatFileSize(a.file_size)}
+                    </span>
+                    <button
+                      type="button"
+                      className="attachment-delete icon-btn danger"
+                      onClick={() => handleDeleteAttachment(a.id)}
+                      aria-label="删除附件"
+                    >
+                      <Icon name="close" size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="detail-actions">
