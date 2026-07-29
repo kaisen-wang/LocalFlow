@@ -12,6 +12,7 @@ npm run dev            # Vite-only frontend (no Tauri backend)
 ```
 
 - `TAURI_DEV_HOST` env var enables network access (Vite HMR on :1421).
+- `APPIMAGE_EXTRACT_AND_RUN=1` required for AppImage build on systems without FUSE support.
 - Vite ignores `src-tauri/` in its file watcher (Tauri handles Rust recompilation).
 - Push tag `v*` to run `.github/workflows/release.yml` (draft GitHub Release).
 
