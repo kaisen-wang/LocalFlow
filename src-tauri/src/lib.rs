@@ -527,7 +527,7 @@ fn get_tasks(filter: Option<String>, state: tauri::State<DbState>) -> Result<Vec
                 return Err("project filter missing id".into());
             }
             (
-                "SELECT * FROM tasks WHERE project_id = ?1 AND status != 'done' ORDER BY sort_order, created_at DESC",
+                "SELECT * FROM tasks WHERE project_id = ?1 ORDER BY sort_order, created_at DESC",
                 Some(id),
             )
         }
