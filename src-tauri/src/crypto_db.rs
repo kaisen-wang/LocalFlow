@@ -204,6 +204,22 @@ pub fn ensure_schema(conn: &Connection) -> Result<(), String> {
         next = 1;
     }
 
+    if next < 2 {
+        // v2：重复任务间隔列（daily/weekly/monthly/yearly / NULL）
+        let cols_v2: Vec<String> = conn
+            .prepare("PRAGMA table_info(tasks)")
+            .map_err(|e| e.to_string())?
+            .query_map([], |row| row.get(1))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        if !cols_v2.iter().any(|c| c == "repeat_interval") {
+            conn.execute("ALTER TABLE tasks ADD COLUMN repeat_interval TEXT", [])
+                .map_err(|e| e.to_string())?;
+        }
+        next = 2;
+    }
+
     if next > current {
         conn.pragma_update(None, "user_version", next)
             .map_err(|e| e.to_string())?;

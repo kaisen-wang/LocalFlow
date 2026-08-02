@@ -22,6 +22,7 @@ import Select from "./Select";
 import DatePicker from "./DatePicker";
 import Checkbox from "./Checkbox";
 import Icon from "./Icons";
+import SearchOverlay from "./Search";
 import "./App.css";
 
 const VIEWS = [
@@ -42,6 +43,8 @@ const THEME_OPTIONS = [
 
 const SHORTCUT_ROWS = [
   ["Ctrl+Shift+Space", "全局快速收集"],
+  ["Ctrl+F", "全局搜索"],
+  ["Ctrl+Z", "撤销上一步操作"],
   ["Ctrl+1 … 5", "切换 收集箱 / 今日 / 计划 / 随时 / 看板"],
   ["j / ↓", "下一项任务"],
   ["k / ↑", "上一项任务"],
@@ -57,6 +60,13 @@ const SHORTCUT_ROWS = [
 const PRIORITY_LABELS = { high: "高", medium: "中", low: "低" };
 const PRIORITY_COLORS = { high: "#e74c3c", medium: "#f39c12", low: "#7f8c8d" };
 const PROJECT_COLORS = ["#4A90D9", "#E67E22", "#27AE60", "#8E44AD", "#E74C3C", "#16A085"];
+const REPEAT_OPTIONS = [
+  { value: "", label: "不重复" },
+  { value: "daily", label: "每天" },
+  { value: "weekly", label: "每周" },
+  { value: "monthly", label: "每月" },
+  { value: "yearly", label: "每年" },
+];
 
 function formatDate(dateStr) {
   if (!dateStr) return "";
@@ -162,7 +172,18 @@ function App() {
   const [maximized, setMaximized] = useState(false);
   const [showCompleted, setShowCompleted] = useState(true);
   const [doneCollapsed, setDoneCollapsed] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [toast, setToast] = useState("");
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const toastTimer = useRef(null);
   const taskInputRef = useRef(null);
+
+  function notify(msg) {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), 2500);
+  }
 
   const selectedTask = tasks.find((t) => t.id === selectedId) || null;
   const pomoRemaining = useMemo(
@@ -367,6 +388,15 @@ function App() {
 
     function onKeyDown(e) {
       if (e.key === "Escape") {
+        if (searchOpen) {
+          setSearchOpen(false);
+          return;
+        }
+        if (multiSelect) {
+          setMultiSelect(false);
+          setSelectedIds(new Set());
+          return;
+        }
         if (showShortcuts) {
           setShowShortcuts(false);
           return;
@@ -374,6 +404,17 @@ function App() {
         if (selectedId && !isTypingTarget(e.target)) {
           setSelectedId(null);
         }
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        handleUndo();
         return;
       }
 
@@ -448,7 +489,7 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers use latest via closure refresh
-  }, [tasks, selectedId, showShortcuts, pomo, selectedTask, soundEnabled]);
+  }, [tasks, selectedId, showShortcuts, pomo, selectedTask, soundEnabled, multiSelect, searchOpen]);
 
   async function handleCreateTask() {
     const parsed = parseTaskInput(newTaskTitle);
@@ -719,6 +760,63 @@ function App() {
     setSelectedId(null);
   }
 
+  function openTaskFromSearch(task) {
+    setSearchOpen(false);
+    if (task.project_id) switchView(`project:${task.project_id}`);
+    else switchView("inbox");
+    setSelectedId(task.id);
+  }
+
+  async function handleUndo() {
+    try {
+      const applied = await invoke("undo_last");
+      await reloadAllData();
+      notify(applied ? "已撤销" : "没有可撤销的操作");
+    } catch (err) {
+      notify(`撤销失败：${err}`);
+    }
+  }
+
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function batchToggle() {
+    for (const id of selectedIds) {
+      await invoke("toggle_task", { id });
+    }
+    setSelectedIds(new Set());
+    await loadTasks();
+  }
+
+  async function batchSetField(fields) {
+    await invoke("batch_update_tasks", { ids: [...selectedIds], ...fields });
+    setSelectedIds(new Set());
+    await reloadAllData();
+  }
+
+  async function batchDelete() {
+    if (!window.confirm(`删除选中的 ${selectedIds.size} 个任务？`)) return;
+    await invoke("batch_delete_tasks", { ids: [...selectedIds] });
+    setSelectedIds(new Set());
+    await reloadAllData();
+  }
+
+  async function batchAddTag(name) {
+    const trimmed = name.trim().replace(/^#/, "");
+    if (!trimmed) return;
+    for (const id of selectedIds) {
+      await invoke("attach_tag_by_name", { taskId: id, name: trimmed });
+    }
+    setSelectedIds(new Set());
+    await reloadAllData();
+  }
+
   async function runImport(path, password) {
     await invoke("import_backup", { path, password });
     await reloadAllData();
@@ -830,12 +928,24 @@ function App() {
   }
 
   function renderTaskItem(task) {
+    const isSelected = selectedIds.has(task.id);
     return (
       <div
         key={task.id}
-        className={`task-item ${selectedId === task.id ? "selected" : ""} ${completingId === task.id ? "completing" : ""}`}
-        onClick={() => setSelectedId(task.id)}
+        className={`task-item ${selectedId === task.id ? "selected" : ""} ${isSelected ? "multi-selected" : ""} ${completingId === task.id ? "completing" : ""}`}
+        onClick={() => {
+          if (multiSelect) {
+            toggleSelect(task.id);
+          } else {
+            setSelectedId(task.id);
+          }
+        }}
       >
+        {multiSelect && (
+          <span className="multi-select-dot" aria-hidden="true">
+            <Icon name="check" size={12} />
+          </span>
+        )}
         <Checkbox
           variant="round"
           checked={task.status === "done"}
@@ -926,6 +1036,22 @@ function App() {
       >
         <div className="titlebar-title">
           <span className="titlebar-logo">LocalFlow</span>
+          <button
+            className="titlebar-btn"
+            onClick={() => setSearchOpen(true)}
+            title="全局搜索 (Ctrl+F)"
+            aria-label="全局搜索"
+          >
+            <Icon name="search" size={13} />
+          </button>
+          <button
+            className="titlebar-btn"
+            onClick={handleUndo}
+            title="撤销 (Ctrl+Z)"
+            aria-label="撤销"
+          >
+            <Icon name="undo" size={13} />
+          </button>
           <button
             className="titlebar-btn"
             onClick={() => setShowShortcuts(true)}
@@ -1195,6 +1321,18 @@ function App() {
           )}
           <button
             type="button"
+            className={`completed-toggle ${multiSelect ? "on" : ""}`}
+            onClick={() => {
+              setMultiSelect((v) => !v);
+              setSelectedIds(new Set());
+            }}
+            title={multiSelect ? "退出多选" : "进入多选，可批量操作"}
+          >
+            <Icon name="select" size={12} />
+            多选
+          </button>
+          <button
+            type="button"
             className="pomo-start-btn"
             onClick={() => startPomodoro(selectedTask)}
             title="开始 25 分钟番茄钟"
@@ -1203,6 +1341,48 @@ function App() {
             番茄钟
           </button>
         </div>
+        {multiSelect && (
+          <div className="batch-bar">
+            <span className="batch-count">已选 {selectedIds.size}</span>
+            <button
+              type="button"
+              className="batch-btn"
+              onClick={batchToggle}
+              disabled={!selectedIds.size}
+            >
+              完成/取消
+            </button>
+            <button
+              type="button"
+              className="batch-btn"
+              onClick={() => batchSetField({ priority: "high" })}
+              disabled={!selectedIds.size}
+            >
+              高优先
+            </button>
+            <span className="batch-select-wrap">
+              <Select
+                className="compact"
+                ariaLabel="批量设项目"
+                placeholder="批量设项目…"
+                value=""
+                options={[
+                  { value: "", label: "移回收集箱" },
+                  ...projects.map((p) => ({ value: p.id, label: p.name })),
+                ]}
+                onChange={(v) => batchSetField({ projectId: v })}
+              />
+            </span>
+            <button
+              type="button"
+              className="batch-btn danger"
+              onClick={batchDelete}
+              disabled={!selectedIds.size}
+            >
+              删除
+            </button>
+          </div>
+        )}
         {pomo && !pomo.focus && (
           <PomodoroMiniBar
             pomo={pomo}
@@ -1428,6 +1608,19 @@ function App() {
                 patchTask(selectedTask.id, { priority })
               }
             />
+          </div>
+
+          <div className="field">
+            <span className="field-label">重复</span>
+            <Select
+              ariaLabel="重复"
+              value={selectedTask.repeat_interval || ""}
+              options={REPEAT_OPTIONS}
+              onChange={(interval) =>
+                patchTask(selectedTask.id, { repeatInterval: interval })
+              }
+            />
+            <p className="field-hint">设为重复后，完成任务会自动生成下一周期</p>
           </div>
 
           <div className="field">
@@ -1675,6 +1868,14 @@ function App() {
           </div>
         </div>
       )}
+
+      <SearchOverlay
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onOpenTask={openTaskFromSearch}
+      />
+
+      {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );
 }

@@ -1126,3 +1126,86 @@ html, body, #root {
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
   }
 }
+
+/* ── 全局搜索 / 撤销 / 批量操作 / 多选 ── */
+
+.toast {
+  position: fixed;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 400;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  animation: toast-in 0.18s ease;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, -6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 4px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.batch-count {
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.85;
+  padding: 0 4px;
+}
+
+.batch-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.batch-btn:hover:not(:disabled) { background: var(--hover); }
+.batch-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.batch-btn.danger { color: var(--danger, #e74c3c); border-color: var(--danger, #e74c3c); }
+
+.batch-select-wrap { display: inline-flex; }
+
+.task-item.multi-selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+}
+
+.multi-select-dot {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--text);
+  opacity: 0.6;
+  margin: 4px 0 0;
+}
