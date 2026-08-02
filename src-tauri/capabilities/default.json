@@ -6,6 +6,15 @@
   "permissions": [
     "core:default",
     "opener:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "ms-settings:*" },
+        { "url": "x-apple.systempreferences:*" },
+        { "url": "gnome-control-center:*" },
+        { "url": "systemsettings:*" }
+      ]
+    },
     "dialog:default",
     "dialog:allow-confirm",
     "global-shortcut:allow-is-registered",

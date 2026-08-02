@@ -23,6 +23,17 @@ import DatePicker from "./DatePicker";
 import Checkbox from "./Checkbox";
 import Icon from "./Icons";
 import SearchOverlay from "./Search";
+import {
+  getNotifPrefs,
+  saveNotifPrefs,
+  ensureGranted,
+  canNotify,
+  openNotificationSettings,
+  checkDueReminders,
+  checkDailySummary,
+  notifyTaskCompleted,
+  notifyPomodoroDone,
+} from "./Notifications";
 import "./App.css";
 
 const VIEWS = [
@@ -176,8 +187,19 @@ function App() {
   const [toast, setToast] = useState("");
   const [multiSelect, setMultiSelect] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [notifPrefs, setNotifPrefs] = useState(getNotifPrefs);
+  const [notifAllowed, setNotifAllowed] = useState(false);
+  const notifPrefsRef = useRef(notifPrefs);
   const toastTimer = useRef(null);
   const taskInputRef = useRef(null);
+
+  function updateNotifPrefs(patch) {
+    setNotifPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      saveNotifPrefs(next);
+      return next;
+    });
+  }
 
   function notify(msg) {
     setToast(msg);
@@ -332,17 +354,46 @@ function App() {
     const id = setInterval(() => {
       const left = getPomodoroRemaining(pomo);
       if (left <= 0) {
-        setPomo((prev) =>
-          prev && prev.phase === "running"
-            ? { ...prev, phase: "done", focus: true }
-            : prev,
-        );
-        playPomodoroChime();
+        setPomo((prev) => {
+          if (!prev || prev.phase !== "running") return prev;
+          if (
+            notifPrefsRef.current.master &&
+            notifPrefsRef.current.pomo
+          ) {
+            notifyPomodoroDone(prev.taskTitle);
+          }
+          playPomodoroChime();
+          return { ...prev, phase: "done", focus: true };
+        });
       }
       setPomoTick((n) => n + 1);
     }, 250);
     return () => clearInterval(id);
   }, [pomo]);
+
+  // 通知权限：仅反映当前授权状态，真正的权限申请发生在用户开关切换时
+  useEffect(() => {
+    if (!notifPrefs.master) {
+      setNotifAllowed(false);
+      return;
+    }
+    setNotifAllowed(canNotify());
+  }, [notifPrefs.master]);
+
+  // 通知调度：到期提醒 + 每日摘要（每 60s 检查一次）
+  useEffect(() => {
+    if (!notifPrefs.master || !notifAllowed) return undefined;
+    const run = () => {
+      checkDueReminders(tasks, notifPrefsRef.current);
+      checkDailySummary(tasks, notifPrefsRef.current);
+    };
+    const first = setTimeout(run, 3000);
+    const id = setInterval(run, 60000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, [tasks, notifPrefs.master, notifAllowed]);
 
   useEffect(() => {
     if (!pomo || pomo.phase === "done") {
@@ -515,6 +566,12 @@ function App() {
     await invoke("toggle_task", { id });
     if (willComplete) {
       if (soundEnabled) playCompleteSound();
+      if (
+        notifPrefsRef.current.master &&
+        notifPrefsRef.current.progress
+      ) {
+        notifyTaskCompleted(task?.title);
+      }
       setCompletingId(id);
       window.setTimeout(() => {
         setCompletingId((cur) => (cur === id ? null : cur));
@@ -1239,6 +1296,97 @@ function App() {
               onChange={setSoundEnabled}
             />
           </label>
+          <div className="setting-group">
+            <label className="setting-row">
+              <span>桌面通知</span>
+              <Checkbox
+                variant="square"
+                checked={notifPrefs.master}
+                ariaLabel="桌面通知"
+                onChange={async (next) => {
+                  updateNotifPrefs({ master: next });
+                  if (next && !notifAllowed) {
+                    const ok = await ensureGranted();
+                    setNotifAllowed(ok);
+                    if (ok) {
+                      notify("已开启桌面通知");
+                    } else {
+                      notify("通知权限未开启");
+                      openNotificationSettings();
+                    }
+                  } else {
+                    setNotifAllowed(next);
+                  }
+                }}
+              />
+            </label>
+            {notifPrefs.master && (
+              <div className="setting-sub">
+                {!notifAllowed && (
+                  <p className="setting-note notif-prompt">
+                    通知权限未开启，到系统设置中允许后生效{" "}
+                    <button
+                      type="button"
+                      className="notif-open-btn"
+                      onClick={() => openNotificationSettings()}
+                    >
+                      打开系统通知设置
+                    </button>
+                  </p>
+                )}
+                <label className="setting-row">
+                  <span>快要超时提醒</span>
+                  <Checkbox
+                    variant="square"
+                    checked={notifPrefs.due}
+                    ariaLabel="快要超时提醒"
+                    onChange={(next) => updateNotifPrefs({ due: next })}
+                  />
+                </label>
+                <label className="setting-row">
+                  <span>专注结束提醒</span>
+                  <Checkbox
+                    variant="square"
+                    checked={notifPrefs.pomo}
+                    ariaLabel="专注结束提醒"
+                    onChange={(next) => updateNotifPrefs({ pomo: next })}
+                  />
+                </label>
+                <label className="setting-row">
+                  <span>任务完成进度</span>
+                  <Checkbox
+                    variant="square"
+                    checked={notifPrefs.progress}
+                    ariaLabel="任务完成进度"
+                    onChange={(next) => updateNotifPrefs({ progress: next })}
+                  />
+                </label>
+                <label className="setting-row">
+                  <span>每日摘要</span>
+                  <Checkbox
+                    variant="square"
+                    checked={notifPrefs.summary}
+                    ariaLabel="每日摘要"
+                    onChange={(next) => updateNotifPrefs({ summary: next })}
+                  />
+                </label>
+                {notifPrefs.summary && (
+                  <label className="setting-row">
+                    <span>摘要时间</span>
+                    <input
+                      type="time"
+                      className="task-input notif-time"
+                      value={notifPrefs.summaryTime}
+                      aria-label="摘要时间"
+                      onChange={(e) =>
+                        updateNotifPrefs({ summaryTime: e.target.value || "09:00" })
+                      }
+                    />
+                  </label>
+                )}
+              </div>
+            )}
+          </div>
           {encStatus && (
             <EncryptionSettings
               status={encStatus}
