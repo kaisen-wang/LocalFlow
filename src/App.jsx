@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, startTransition } fr
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { save, open } from "@tauri-apps/plugin-dialog";
+import { save, open, confirm } from "@tauri-apps/plugin-dialog";
 
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { parseTaskInput, formatParsePreview } from "./parseTaskInput";
@@ -153,9 +153,15 @@ function App() {
   const [pomoTick, setPomoTick] = useState(0);
   const [dataMessage, setDataMessage] = useState("");
   const [backupBusy, setBackupBusy] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importPath, setImportPath] = useState(null);
+  const [importPassword, setImportPassword] = useState("");
+  const [importPasswordError, setImportPasswordError] = useState("");
   const [encStatus, setEncStatus] = useState(null); // null = 检查中
   const [bootReady, setBootReady] = useState(false);
   const [maximized, setMaximized] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(true);
+  const [doneCollapsed, setDoneCollapsed] = useState(false);
   const taskInputRef = useRef(null);
 
   const selectedTask = tasks.find((t) => t.id === selectedId) || null;
@@ -169,6 +175,9 @@ function App() {
   const tagIdFromView = currentView.startsWith("tag:")
     ? currentView.slice("tag:".length)
     : null;
+  const isContextualView = !!(projectIdFromView || tagIdFromView);
+  const activeTasks = tasks.filter((t) => t.status !== "done");
+  const doneTasks = tasks.filter((t) => t.status === "done");
 
   const parsedInput = useMemo(
     () => parseTaskInput(newTaskTitle),
@@ -699,6 +708,69 @@ function App() {
     }
   }
 
+  async function reloadAllData() {
+    await Promise.all([loadTasks(), loadProjects(), loadTags()]);
+    setSelectedId(null);
+  }
+
+  async function runImport(path, password) {
+    await invoke("import_backup", { path, password });
+    await reloadAllData();
+  }
+
+  async function handleImportBackup() {
+    setDataMessage("");
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "备份文件", extensions: ["db"] }],
+    });
+    if (!selected) return;
+    const ok = await confirm(
+      "导入将用备份文件替换当前所有数据，且无法撤销（导入前会自动生成一份当前数据备份）。确定继续吗？",
+      { title: "导入备份数据", kind: "warning" },
+    );
+    if (!ok) return;
+    setImportBusy(true);
+    try {
+      await runImport(selected, undefined);
+      setDataMessage("导入成功");
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes("BACKUP_ENCRYPTED")) {
+        setImportPath(selected);
+        setImportPassword("");
+        setImportPasswordError("");
+      } else {
+        setDataMessage(`导入失败：${msg}`);
+      }
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function handleImportSubmitPassword() {
+    if (!importPath) return;
+    setImportBusy(true);
+    setImportPasswordError("");
+    try {
+      await runImport(importPath, importPassword);
+      setImportPath(null);
+      setImportPassword("");
+      setDataMessage("导入成功");
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes("BACKUP_PASSWORD_WRONG")) {
+        setImportPasswordError("备份密码错误，请重试");
+      } else {
+        setImportPath(null);
+        setImportPassword("");
+        setDataMessage(`导入失败：${msg}`);
+      }
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   async function handleExport(format) {
     setDataMessage("");
     try {
@@ -784,6 +856,11 @@ function App() {
             )}
             {task.status === "doing" && (
               <span className="task-status-doing">进行中</span>
+            )}
+            {task.status === "done" && task.completed_at && (
+              <span className="task-completed-at">
+                完成于 {formatDate(task.completed_at)}
+              </span>
             )}
             {(task.tags || []).map((name) => (
               <span key={name} className="task-tag">
@@ -1065,6 +1142,14 @@ function App() {
           <button
             type="button"
             className="data-btn"
+            disabled={importBusy}
+            onClick={handleImportBackup}
+          >
+            导入备份数据…
+          </button>
+          <button
+            type="button"
+            className="data-btn"
             onClick={() => handleExport("markdown")}
           >
             导出 Markdown
@@ -1090,6 +1175,18 @@ function App() {
       <main className="main">
         <div className="main-header">
           <h2 className="view-title">{viewTitle()}</h2>
+          {isContextualView && doneTasks.length > 0 && (
+            <button
+              type="button"
+              className="completed-toggle"
+              onClick={() => setShowCompleted((v) => !v)}
+              title={showCompleted ? "隐藏已完成任务" : "显示已完成任务"}
+            >
+              <Icon name="check" size={12} />
+              显示已完成
+              <span className={`toggle-switch ${showCompleted ? "on" : ""}`} />
+            </button>
+          )}
           <button
             type="button"
             className="pomo-start-btn"
@@ -1136,7 +1233,7 @@ function App() {
             />
           ) : (
             <>
-              {tasks.length === 0 && (
+              {(isContextualView ? activeTasks.length + (showCompleted ? doneTasks.length : 0) : tasks.length) === 0 && (
                 <div className="empty-state">暂无任务，在上方输入框中添加吧</div>
               )}
               {upcomingGroups
@@ -1146,7 +1243,31 @@ function App() {
                       {group.tasks.map(renderTaskItem)}
                     </div>
                   ))
-                : tasks.map(renderTaskItem)}
+                : isContextualView
+                  ? (
+                    <>
+                      {activeTasks.map(renderTaskItem)}
+                      {showCompleted && doneTasks.length > 0 && (
+                        <div className="task-group">
+                          <button
+                            type="button"
+                            className="task-group-toggle"
+                            onClick={() => setDoneCollapsed((v) => !v)}
+                            aria-expanded={!doneCollapsed}
+                          >
+                            <Icon
+                              name={doneCollapsed ? "chevronRight" : "chevronDown"}
+                              size={12}
+                            />
+                            <span>已完成</span>
+                            <span className="done-count">{doneTasks.length}</span>
+                          </button>
+                          {!doneCollapsed && doneTasks.map(renderTaskItem)}
+                        </div>
+                      )}
+                    </>
+                  )
+                  : tasks.map(renderTaskItem)}
             </>
           )}
         </div>
@@ -1478,6 +1599,73 @@ function App() {
                 </li>
               ))}
             </ul>
+          </div>
+        </div>
+      )}
+
+      {importPath && (
+        <div
+          className="shortcuts-overlay"
+          onClick={() => !importBusy && setImportPath(null)}
+          role="presentation"
+        >
+          <div
+            className="shortcuts-panel import-password-panel"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="输入备份密码"
+          >
+            <div className="shortcuts-header">
+              <h3>导入备份数据</h3>
+              <button
+                type="button"
+                className="detail-close icon-btn"
+                disabled={importBusy}
+                onClick={() => setImportPath(null)}
+                aria-label="关闭"
+              >
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+            <p className="import-password-desc">
+              该备份文件已加密，请输入备份时的密码
+            </p>
+            <input
+              type="password"
+              className="task-input"
+              value={importPassword}
+              onChange={(e) => setImportPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !importBusy) {
+                  handleImportSubmitPassword();
+                }
+              }}
+              placeholder="备份密码"
+              autoFocus
+            />
+            {importPasswordError && (
+              <p className="data-msg import-password-error">
+                {importPasswordError}
+              </p>
+            )}
+            <div className="shortcuts-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={importBusy}
+                onClick={() => setImportPath(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={importBusy || !importPassword}
+                onClick={handleImportSubmitPassword}
+              >
+                {importBusy ? "导入中…" : "导入"}
+              </button>
+            </div>
           </div>
         </div>
       )}

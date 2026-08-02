@@ -24,6 +24,7 @@ pub struct Task {
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
+    pub completed_at: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -204,6 +205,27 @@ fn list_backups(state: tauri::State<DbState>) -> Result<Vec<BackupInfo>, String>
         .collect();
     items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(items)
+}
+
+#[tauri::command]
+fn import_backup(
+    path: String,
+    password: Option<String>,
+    state: tauri::State<DbState>,
+) -> Result<(), String> {
+    let src = PathBuf::from(&path);
+    if !src.exists() {
+        return Err("备份文件不存在".into());
+    }
+
+    // 导入前先为当前数据留一份备份（安全网）
+    {
+        let db = state.lock_conn()?;
+        let _ = db.execute_batch("PRAGMA wal_checkpoint(FULL);");
+    }
+    let _ = create_rolling_backup(&state.data_dir);
+
+    crypto_db::restore_from_backup(&state, &src, password.as_deref())
 }
 
 fn csv_escape(value: &str) -> String {
@@ -446,6 +468,7 @@ fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         sort_order: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+        completed_at: row.get(11)?,
         tags: Vec::new(),
     })
 }
@@ -527,7 +550,7 @@ fn get_tasks(filter: Option<String>, state: tauri::State<DbState>) -> Result<Vec
                 return Err("project filter missing id".into());
             }
             (
-                "SELECT * FROM tasks WHERE project_id = ?1 ORDER BY sort_order, created_at DESC",
+                "SELECT * FROM tasks WHERE project_id = ?1 ORDER BY CASE WHEN status = 'done' THEN 1 ELSE 0 END, sort_order, created_at DESC",
                 Some(id),
             )
         }
@@ -539,8 +562,8 @@ fn get_tasks(filter: Option<String>, state: tauri::State<DbState>) -> Result<Vec
             (
                 "SELECT t.* FROM tasks t
                  INNER JOIN task_tags tt ON tt.task_id = t.id
-                 WHERE tt.tag_id = ?1 AND t.status != 'done'
-                 ORDER BY t.sort_order, t.created_at DESC",
+                 WHERE tt.tag_id = ?1
+                 ORDER BY CASE WHEN t.status = 'done' THEN 1 ELSE 0 END, t.sort_order, t.created_at DESC",
                 Some(id),
             )
         }
@@ -611,9 +634,14 @@ fn update_task(
         .map_err(|e| e.to_string())?;
     }
     if let Some(status) = &status {
+        let completed_at = if status == "done" {
+            Some(now.clone())
+        } else {
+            None
+        };
         db.execute(
-            "UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![status, now, id],
+            "UPDATE tasks SET status = ?1, completed_at = ?2, updated_at = ?3 WHERE id = ?4",
+            rusqlite::params![status, completed_at, now, id],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -660,9 +688,14 @@ fn toggle_task(id: String, state: tauri::State<DbState>) -> Result<Task, String>
     } else {
         "done"
     };
+    let completed_at = if new_status == "done" {
+        Some(now.clone())
+    } else {
+        None
+    };
     db.execute(
-        "UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
-        rusqlite::params![new_status, now, id],
+        "UPDATE tasks SET status = ?1, completed_at = ?2, updated_at = ?3 WHERE id = ?4",
+        rusqlite::params![new_status, completed_at, now, id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -1406,6 +1439,7 @@ pub fn run() {
             backup_now,
             backup_to_dir,
             list_backups,
+            import_backup,
             build_export,
             write_text_file,
             get_encryption_status,

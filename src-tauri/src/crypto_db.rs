@@ -89,7 +89,7 @@ fn escape_sql_literal(s: &str) -> String {
 }
 
 /// 把当前连接内容导出到目标库（可带/不带密钥）
-fn sqlcipher_export_to(conn: &Connection, dest: &Path, dest_key: &str) -> Result<(), String> {
+pub fn sqlcipher_export_to(conn: &Connection, dest: &Path, dest_key: &str) -> Result<(), String> {
     if dest.exists() {
         std::fs::remove_file(dest).map_err(|e| e.to_string())?;
     }
@@ -127,7 +127,8 @@ pub fn ensure_schema(conn: &Connection) -> Result<(), String> {
             is_inbox INTEGER NOT NULL DEFAULT 0,
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS tags (
@@ -178,6 +179,18 @@ pub fn ensure_schema(conn: &Connection) -> Result<(), String> {
     )
     .ok();
 
+    let cols: Vec<String> = conn
+        .prepare("PRAGMA table_info(tasks)")
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| row.get(1))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    if !cols.iter().any(|c| c == "completed_at") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT", [])
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -194,14 +207,30 @@ pub fn open_encrypted_db(data_dir: &Path, password: &str) -> Result<Connection, 
     if !path.exists() {
         return Err("数据库文件不存在".into());
     }
-    let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    let conn = open_encrypted_at(&path, password)?;
+    ensure_schema(&conn)?;
+    Ok(conn)
+}
+
+/// 用密钥打开任意路径的 SQLCipher 加密库（不补全 schema）
+pub fn open_encrypted_at(path: &Path, password: &str) -> Result<Connection, String> {
+    let conn = Connection::open(path).map_err(|e| e.to_string())?;
     conn.pragma_update(None, "key", password)
         .map_err(|e| format!("设置密钥失败: {e}"))?;
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
         row.get::<_, i64>(0)
     })
     .map_err(|_| "密码错误，或数据库已损坏".to_string())?;
-    ensure_schema(&conn)?;
+    Ok(conn)
+}
+
+/// 打开任意路径的明文库（不补全 schema）
+pub fn open_plain_at(path: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(path).map_err(|e| e.to_string())?;
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    })
+    .map_err(|_| "不是有效的数据库文件".to_string())?;
     Ok(conn)
 }
 
@@ -364,4 +393,213 @@ pub fn unlock_into_state(state: &DbState, password: &str) -> Result<(), String> 
     }
     state.unlocked.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+/// 从备份文件恢复数据：保持当前加密模式，替换整个数据库。
+/// password 用于打开加密备份（当前会话密钥会优先尝试）。
+/// 返回 Err("BACKUP_ENCRYPTED") 表示需要用户提供备份密码；
+/// 返回 Err("BACKUP_PASSWORD_WRONG") 表示提供的密码不正确。
+pub fn restore_from_backup(
+    state: &DbState,
+    src: &Path,
+    password: Option<&str>,
+) -> Result<(), String> {
+    let current_encrypted = state.encrypted.load(Ordering::SeqCst);
+    let current_key = {
+        let key = state.session_key.lock().map_err(|e| e.to_string())?;
+        key.clone()
+    };
+
+    // 明文探测：加密库用明文连接读不到 sqlite_master
+    let is_plain = Connection::open(src)
+        .ok()
+        .map(|conn| {
+            conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .is_ok()
+        })
+        .unwrap_or(false);
+
+    // 解析备份密钥
+    let backup_key: Option<String> = if is_plain {
+        None
+    } else {
+        let mut found: Option<String> = None;
+        let candidates = current_key
+            .clone()
+            .into_iter()
+            .chain(password.map(|s| s.to_string()));
+        for candidate in candidates {
+            if open_encrypted_at(src, &candidate).is_ok() {
+                found = Some(candidate);
+                break;
+            }
+        }
+        match found {
+            Some(k) => Some(k),
+            None => {
+                return Err(if password.is_some() {
+                    "BACKUP_PASSWORD_WRONG"
+                } else {
+                    "BACKUP_ENCRYPTED"
+                }
+                .into())
+            }
+        }
+    };
+
+    // 打开备份源并补全结构（新列等）
+    let src_conn = match &backup_key {
+        Some(k) => open_encrypted_at(src, k)?,
+        None => open_plain_at(src)?,
+    };
+    ensure_schema(&src_conn)?;
+
+    // 转换到当前加密格式的临时文件
+    let tmp = state.data_dir.join("localflow.import_tmp.db");
+    let _ = std::fs::remove_file(&tmp);
+    let target_key = if current_encrypted {
+        current_key.as_deref().unwrap_or("")
+    } else {
+        ""
+    };
+    sqlcipher_export_to(&src_conn, &tmp, target_key)?;
+
+    // 校验临时文件可正常打开
+    if current_encrypted {
+        let pw = current_key.as_deref().ok_or("缺少密钥")?;
+        open_encrypted_at(&tmp, pw)
+            .map_err(|e| format!("备份转换失败: {e}"))?;
+    } else {
+        open_plain_at(&tmp).map_err(|e| format!("备份转换失败: {e}"))?;
+    }
+
+    let swap_result = swap_db_file(state, &tmp, current_encrypted, current_key.as_deref());
+    if swap_result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    swap_result?;
+
+    let guard = state.lock_conn()?;
+    ensure_default_project(&guard)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("localflow_ut_{}_{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn fresh_state(app_dir: &Path, encrypted: bool) -> DbState {
+        let conn = if encrypted {
+            let c = Connection::open(db_file(app_dir)).unwrap();
+            c.pragma_update(None, "key", "testpass123").unwrap();
+            c.execute_batch(
+                "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', due_date TEXT, priority TEXT NOT NULL DEFAULT 'medium', status TEXT NOT NULL DEFAULT 'todo', project_id TEXT, is_inbox INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), completed_at TEXT);",
+            )
+            .unwrap();
+            c
+        } else {
+            open_plain_db(app_dir).unwrap()
+        };
+        DbState {
+            db: Mutex::new(conn),
+            data_dir: app_dir.to_path_buf(),
+            unlocked: AtomicBool::new(true),
+            encrypted: AtomicBool::new(encrypted),
+            session_key: Mutex::new(if encrypted {
+                Some("testpass123".to_string())
+            } else {
+                None
+            }),
+        }
+    }
+
+    fn make_backup_file(dir: &Path, name: &str, encrypted: bool) -> PathBuf {
+        let path = dir.join(name);
+        let conn = Connection::open(&path).unwrap();
+        if encrypted {
+            conn.pragma_update(None, "key", "backuppass123").unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', due_date TEXT, priority TEXT NOT NULL DEFAULT 'medium', status TEXT NOT NULL DEFAULT 'todo', project_id TEXT, is_inbox INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), completed_at TEXT);
+             INSERT INTO tasks (id, title) VALUES ('t1', '导入任务');",
+        )
+        .unwrap();
+        drop(conn);
+        path
+    }
+
+    fn task_count(state: &DbState) -> i64 {
+        state
+            .lock_conn()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn restore_plain_backup_into_plain_app() {
+        let app_dir = temp_dir("app_plain");
+        let src_dir = temp_dir("src_plain");
+        let state = fresh_state(&app_dir, false);
+        assert_eq!(task_count(&state), 0);
+
+        let src = make_backup_file(&src_dir, "backup.db", false);
+        restore_from_backup(&state, &src, None).unwrap();
+
+        assert_eq!(task_count(&state), 1);
+        assert!(!app_dir.join("localflow.import_tmp.db").exists());
+        assert!(!state.encrypted.load(Ordering::SeqCst));
+        let _ = std::fs::remove_dir_all(&app_dir);
+        let _ = std::fs::remove_dir_all(&src_dir);
+    }
+
+    #[test]
+    fn restore_encrypted_backup_requires_password() {
+        let app_dir = temp_dir("app_enc_req");
+        let src_dir = temp_dir("src_enc");
+        let state = fresh_state(&app_dir, false);
+        let src = make_backup_file(&src_dir, "backup.db", true);
+
+        let err = restore_from_backup(&state, &src, None).unwrap_err();
+        assert_eq!(err, "BACKUP_ENCRYPTED");
+        assert_eq!(task_count(&state), 0);
+
+        restore_from_backup(&state, &src, Some("wrongpass")).unwrap_err();
+        assert_eq!(task_count(&state), 0);
+
+        restore_from_backup(&state, &src, Some("backuppass123")).unwrap();
+        assert_eq!(task_count(&state), 1);
+        assert!(!state.encrypted.load(Ordering::SeqCst));
+        let _ = std::fs::remove_dir_all(&app_dir);
+        let _ = std::fs::remove_dir_all(&src_dir);
+    }
+
+    #[test]
+    fn restore_plain_backup_into_encrypted_app() {
+        let app_dir = temp_dir("app_enc_target");
+        let src_dir = temp_dir("src_plain2");
+        let state = fresh_state(&app_dir, true);
+        let src = make_backup_file(&src_dir, "backup.db", false);
+
+        restore_from_backup(&state, &src, None).unwrap();
+
+        assert_eq!(task_count(&state), 1);
+        assert!(state.encrypted.load(Ordering::SeqCst));
+        // 目标库仍应为加密库：用明文无法读取
+        let plain_ok = Connection::open(db_file(&app_dir))
+            .and_then(|c| c.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get::<_, i64>(0)))
+            .is_ok();
+        assert!(!plain_ok);
+        let _ = std::fs::remove_dir_all(&app_dir);
+        let _ = std::fs::remove_dir_all(&src_dir);
+    }
 }
