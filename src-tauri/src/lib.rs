@@ -270,6 +270,8 @@ fn build_export(format: String, state: tauri::State<DbState>) -> Result<String, 
             .map_err(|e| e.to_string())?;
         mapped.filter_map(|r| r.ok()).collect()
     };
+    let project_by_id: std::collections::HashMap<&str, &Project> =
+        projects.iter().map(|p| (p.id.as_str(), p)).collect();
 
     let tags: Vec<Tag> = {
         let mut stmt = db
@@ -306,7 +308,7 @@ fn build_export(format: String, state: tauri::State<DbState>) -> Result<String, 
                 let project_name = task
                     .project_id
                     .as_ref()
-                    .and_then(|pid| projects.iter().find(|p| &p.id == pid))
+                    .and_then(|pid| project_by_id.get(pid.as_str()))
                     .map(|p| p.name.as_str())
                     .unwrap_or("");
                 let tag_str = task.tags.join("|");
@@ -490,9 +492,35 @@ fn load_task_tag_names(db: &Connection, task_id: &str) -> Result<Vec<String>, St
     Ok(names)
 }
 
+/// 为一批任务一次性加载标签，避免对每个任务单独查询（N+1）。
+/// 空列表直接返回，不执行任何 SQL。
 fn attach_tags(db: &Connection, tasks: &mut [Task]) -> Result<(), String> {
+    if tasks.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT tt.task_id, tags.name FROM task_tags tt
+         JOIN tags ON tags.id = tt.tag_id
+         WHERE tt.task_id IN ({placeholders})
+         ORDER BY tags.name ASC"
+    );
+    let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut tag_names: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(ids.iter().copied()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows.filter_map(|r| r.ok()) {
+        tag_names.entry(row.0).or_default().push(row.1);
+    }
     for task in tasks.iter_mut() {
-        task.tags = load_task_tag_names(db, &task.id)?;
+        if let Some(names) = tag_names.get(&task.id) {
+            task.tags = names.clone();
+        }
     }
     Ok(())
 }

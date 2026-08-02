@@ -104,93 +104,118 @@ pub fn sqlcipher_export_to(conn: &Connection, dest: &Path, dest_key: &str) -> Re
     Ok(())
 }
 
+/// v1 建表索引（幂等，可对旧库重复执行）。
+/// 新增结构改动时：追加一个 `SCHEMA_V{n}` 常量并在 `ensure_schema` 增加对应分支，
+/// 通过 `PRAGMA user_version` 记录当前 schema 版本，仅对未应用的迁移执行。
+static SCHEMA_V1: &str = "
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    color TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    due_date TEXT,
+    priority TEXT NOT NULL DEFAULT 'medium',
+    status TEXT NOT NULL DEFAULT 'todo',
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    is_inbox INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tags (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    color TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS task_tags (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (task_id, tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS subtasks (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_inbox ON tasks(is_inbox);
+CREATE INDEX IF NOT EXISTS idx_tasks_sort ON tasks(sort_order);
+CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag_id);
+CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
+CREATE TABLE IF NOT EXISTS task_attachments (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    file_name TEXT NOT NULL,
+    stored_path TEXT NOT NULL,
+    file_size INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_attachments_task ON task_attachments(task_id);
+";
+
+/// 版本化迁移入口。基于 `PRAGMA user_version` 判断哪些迁移已执行过，
+/// 逐版本应用未执行的迁移后记录新版本号。
 pub fn ensure_schema(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS projects (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            color TEXT,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
+    let current: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+        .map_err(|e| e.to_string())?;
 
-        CREATE TABLE IF NOT EXISTS tasks (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            due_date TEXT,
-            priority TEXT NOT NULL DEFAULT 'medium',
-            status TEXT NOT NULL DEFAULT 'todo',
-            project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-            is_inbox INTEGER NOT NULL DEFAULT 0,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-            completed_at TEXT
-        );
+    let mut next = current;
 
-        CREATE TABLE IF NOT EXISTS tags (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE,
-            color TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS task_tags (
-            task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-            tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-            PRIMARY KEY (task_id, tag_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS subtasks (
-            id TEXT PRIMARY KEY,
-            task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-            title TEXT NOT NULL,
-            done INTEGER NOT NULL DEFAULT 0,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
-        CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-        CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
-        CREATE INDEX IF NOT EXISTS idx_tasks_inbox ON tasks(is_inbox);
-        CREATE INDEX IF NOT EXISTS idx_tasks_sort ON tasks(sort_order);
-        CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag_id);
-        CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
-        CREATE TABLE IF NOT EXISTS task_attachments (
-            id TEXT PRIMARY KEY,
-            task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-            file_name TEXT NOT NULL,
-            stored_path TEXT NOT NULL,
-            file_size INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_task_attachments_task ON task_attachments(task_id);
-    ",
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "UPDATE tasks SET is_inbox = 1 WHERE project_id IS NULL AND is_inbox = 0",
-        [],
-    )
-    .ok();
-
-    let cols: Vec<String> = conn
-        .prepare("PRAGMA table_info(tasks)")
-        .map_err(|e| e.to_string())?
-        .query_map([], |row| row.get(1))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-    if !cols.iter().any(|c| c == "completed_at") {
-        conn.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT", [])
-            .map_err(|e| e.to_string())?;
+    if next < 1 {
+        conn.execute_batch(SCHEMA_V1).map_err(|e| e.to_string())?;
+        // 兜底：历史库可能缺少 completed_at 列
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(tasks)")
+            .map_err(|e| e.to_string())?
+            .query_map([], |row| row.get(1))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        if !cols.iter().any(|c| c == "completed_at") {
+            conn.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT", [])
+                .map_err(|e| e.to_string())?;
+        }
+        // 兜底：修复 is_inbox 未正确标记的历史数据
+        conn.execute(
+            "UPDATE tasks SET is_inbox = 1 WHERE project_id IS NULL AND is_inbox = 0",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        next = 1;
     }
 
+    if next > current {
+        conn.pragma_update(None, "user_version", next)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 开启 WAL 日志模式，提升读写并发性能。
+/// 注意：调用方负责在复制 db 文件前执行 wal_checkpoint，避免遗漏 WAL 内容。
+fn enable_wal(conn: &Connection) -> Result<(), String> {
+    conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()))
+        .map_err(|e| format!("启用 WAL 失败: {e}"))?;
     Ok(())
 }
 
@@ -198,6 +223,7 @@ pub fn open_plain_db(data_dir: &Path) -> Result<Connection, String> {
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let path = db_file(data_dir);
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    enable_wal(&conn)?;
     ensure_schema(&conn)?;
     Ok(conn)
 }
@@ -208,6 +234,7 @@ pub fn open_encrypted_db(data_dir: &Path, password: &str) -> Result<Connection, 
         return Err("数据库文件不存在".into());
     }
     let conn = open_encrypted_at(&path, password)?;
+    enable_wal(&conn)?;
     ensure_schema(&conn)?;
     Ok(conn)
 }

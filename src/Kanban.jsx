@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Checkbox from "./Checkbox";
 import "./Kanban.css";
 
@@ -22,6 +22,10 @@ export default function KanbanBoard({
   onToggle,
 }) {
   const [dragOverCol, setDragOverCol] = useState(null);
+  const projectById = useMemo(
+    () => new Map(projects.map((p) => [p.id, p])),
+    [projects],
+  );
 
   function tasksFor(col) {
     return tasks.filter((t) => normalizeStatus(t.status) === col);
@@ -90,7 +94,7 @@ export default function KanbanBoard({
                   <div className="kanban-card-meta">
                     {task.project_id && (
                       <span>
-                        {projects.find((p) => p.id === task.project_id)?.name ||
+                        {projectById.get(task.project_id)?.name ||
                           ""}
                       </span>
                     )}

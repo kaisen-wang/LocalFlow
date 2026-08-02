@@ -176,6 +176,12 @@ function App() {
     ? currentView.slice("tag:".length)
     : null;
   const isContextualView = !!(projectIdFromView || tagIdFromView);
+  // 用 Map 快速按 id 取项目/标签，避免渲染时线性 find
+  const projectById = useMemo(
+    () => new Map(projects.map((p) => [p.id, p])),
+    [projects],
+  );
+  const tagById = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags]);
   const activeTasks = tasks.filter((t) => t.status !== "done");
   const doneTasks = tasks.filter((t) => t.status === "done");
 
@@ -806,17 +812,17 @@ function App() {
     const view = VIEWS.find((v) => v.key === currentView);
     if (view) return view.label;
     if (projectIdFromView) {
-      return projects.find((p) => p.id === projectIdFromView)?.name || "项目";
+      return projectById.get(projectIdFromView)?.name || "项目";
     }
     if (tagIdFromView) {
-      const name = tags.find((t) => t.id === tagIdFromView)?.name;
+      const name = tagById.get(tagIdFromView)?.name;
       return name ? `#${name}` : "标签";
     }
     return "任务";
   }
 
   const createPlaceholder = projectIdFromView
-    ? `添加到「${projects.find((p) => p.id === projectIdFromView)?.name || "项目"}」，可用 明天 #标签 !高`
+    ? `添加到「${projectById.get(projectIdFromView)?.name || "项目"}」，可用 明天 #标签 !高`
     : "例：明天下午交报告 #工作 !高";
 
   function switchView(next) {
@@ -851,7 +857,7 @@ function App() {
             )}
             {task.project_id && (
               <span className="task-project">
-                {projects.find((p) => p.id === task.project_id)?.name || ""}
+                {projectById.get(task.project_id)?.name || ""}
               </span>
             )}
             {task.status === "doing" && (
